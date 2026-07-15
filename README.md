@@ -44,3 +44,21 @@ export async function fetchSpaceEvents(spaceId: string) {
 ## Notes
 - This service intentionally keeps the Mighty API key on the server side and exposes only read endpoints the county pages need.
 - Adjust rate limits, caching, and auth if you expose beyond internal use.
+
+## AWS deployment
+
+This repository is prepared for GitHub → AWS CodePipeline → CodeBuild → CloudFormation/SAM → Lambda Function URL deployment.
+
+Before creating the pipeline:
+
+1. Store `MIGHTY_API_KEY` as JSON in AWS Secrets Manager under the `MIGHTY_API_KEY` key.
+2. Push `template.yaml`, `buildspec.yml`, and `package-lock.json` to the deployment branch.
+3. Follow [`docs/deployment.md`](docs/deployment.md) to create the artifact bucket, GitHub CodeConnection, CodeBuild project, and CloudFormation deploy stage.
+
+The frontend must receive only the public API URL:
+
+```text
+VITE_MIGHTY_PROXY=https://<function-url-id>.lambda-url.<region>.on.aws
+```
+
+Never expose the Mighty token through a `VITE_*` variable.

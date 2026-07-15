@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Mighty Networks proxy API for Patriots in Action.
+
+Parameters:
+  MightyApiSecretArn:
+    Type: String
+    Description: ARN of the Secrets Manager secret containing MIGHTY_API_KEY.
+  MightyNetworkId:
+    Type: String
+    Description: Mighty Networks network ID.
+  CorsOrigin:
+    Type: String
+    Default: https://patriotsinaction.com,https://www.patriotsinaction.com
+    Description: Comma-separated browser origins allowed to call this API.
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures:
+      - arm64
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_ENV: production
+        CORS_ORIGIN: !Ref CorsOrigin
+        MIGHTY_API_SECRET_ARN: !Ref MightyApiSecretArn
+        MIGHTY_NETWORK_ID: !Ref MightyNetworkId
+
+Resources:
+  MightyApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: dist/handler.handler
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource: !Ref MightyApiSecretArn
+
+Outputs:
+  MightyApiUrl:
+    Description: Public Lambda Function URL for the Mighty API.
+    Value: !GetAtt MightyApiFunctionUrl.FunctionUrl

@@ -6,7 +6,7 @@ import { config } from "./config";
 import spacesRouter from "./routes/spaces";
 import { AxiosError } from "axios";
 
-const app = express();
+export const app = express();
 
 const corsOrigins =
   config.corsOrigin === "*"
@@ -16,27 +16,17 @@ const corsOrigins =
         .map((origin) => origin.trim())
         .filter(Boolean);
 
-// Explicit CORS headers first so they are always present
-app.use((req, res, next) => {
-  const requestOrigin = req.headers.origin;
-
-  if (corsOrigins === "*" || (requestOrigin && corsOrigins.includes(requestOrigin))) {
-    res.header("Access-Control-Allow-Origin", corsOrigins === "*" ? "*" : requestOrigin);
-  }
-  res.header("Access-Control-Allow-Methods", "GET,HEAD,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-
-  next();
-});
-
-// Also register cors() for completeness (permissive)
+// Keep CORS at the application layer; do not also configure Function URL CORS.
 app.use(
   cors({
-    origin: corsOrigins === "*" ? true : corsOrigins,
+    origin: (origin, callback) => {
+      if (!origin || corsOrigins === "*" || corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, false);
+    },
     methods: ["GET", "HEAD", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
@@ -88,12 +78,14 @@ app.use(
   },
 );
 
-const server = app.listen(config.port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Mighty API listening on port ${config.port}`);
-});
+if (require.main === module) {
+  const server = app.listen(config.port, () => {
+    // eslint-disable-next-line no-console
+    console.log(`Mighty API listening on port ${config.port}`);
+  });
 
-server.on("error", (error) => {
-  // eslint-disable-next-line no-console
-  console.error("Server error", error);
-});
+  server.on("error", (error) => {
+    // eslint-disable-next-line no-console
+    console.error("Server error", error);
+  });
+}

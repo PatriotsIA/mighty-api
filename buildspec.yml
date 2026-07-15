@@ -1,0 +1,23 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - npm ci
+      - python3 -m pip install --user aws-sam-cli
+      - $HOME/.local/bin/sam --version
+  pre_build:
+    commands:
+      - npm run typecheck
+      - $HOME/.local/bin/sam validate
+  build:
+    commands:
+      - npm run build
+      - $HOME/.local/bin/sam build
+      - $HOME/.local/bin/sam package --template-file .aws-sam/build/template.yaml --s3-bucket "$ARTIFACT_BUCKET" --output-template-file packaged.yaml
+
+artifacts:
+  files:
+    - packaged.yaml
