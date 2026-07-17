@@ -406,6 +406,8 @@ The CodePipeline service role must also be allowed to pass this execution role t
 
 Do not leave **Role name** empty. The execution role creates and updates the stack, Lambda function, Function URL, Lambda execution role, CloudWatch Logs, and SAM deployment artifacts.
 
+The **Parameter overrides** field accepts raw JSON only. Do not paste a Markdown language label such as `json`, triple backticks, comments, or placeholder values into that field.
+
 ## 9. Run and Confirm the First Deployment
 
 1. In CodePipeline, select **Release change**.
