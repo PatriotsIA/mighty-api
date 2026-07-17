@@ -257,7 +257,98 @@ After the pipeline is created:
 
 The CodeBuild role does not need permission to read the Mighty secret. Only the deployed Lambda function reads it.
 
-## 7. Add the CloudFormation Deploy Stage
+## 7. Create the CloudFormation Execution Role
+
+Create a separate role for CloudFormation to assume while it creates and updates the application stack. Do not reuse the CodeBuild role.
+
+1. Open **IAM > Roles > Create role**.
+2. Choose **AWS service** as the trusted entity type.
+3. Select **CloudFormation** as the use case, then choose **Next**.
+4. Choose **Create policy**, open the **JSON** tab, and use this first-deployment policy:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "DeployMightyApiFirstRelease",
+         "Effect": "Allow",
+         "Action": [
+           "cloudformation:*",
+           "lambda:*",
+           "iam:*",
+           "logs:*",
+           "s3:*"
+         ],
+         "Resource": "*"
+       }
+     ]
+   }
+   ```
+
+5. Name the policy:
+
+   ```text
+   MightyApiFirstDeployPolicy
+   ```
+
+6. Return to the role-creation tab, refresh the policy list, attach `MightyApiFirstDeployPolicy`, and select **Next**.
+7. Name the role:
+
+   ```text
+   MightyApiCloudFormationExecutionRole
+   ```
+
+8. Create the role and copy its ARN.
+
+This broad policy is appropriate only for the first deployment while the exact generated Lambda and IAM resource names are unknown. Tighten it afterward to this application's CloudFormation stack, Lambda resources, artifact bucket, and secret.
+
+The CodePipeline service role must also be allowed to pass this execution role to CloudFormation:
+
+1. Open **CodePipeline > Pipelines > MightyAPI** and choose **Edit**.
+2. In **Pipeline properties**, locate the **Service role**. Open the role link, or copy its name and open it through **IAM > Roles**. Do not use the CodeBuild role.
+3. On the pipeline service role's **Permissions** tab, expand the existing policies and search for `iam:PassRole`. If a policy already allows `iam:PassRole` for `MightyApiCloudFormationExecutionRole` (or a broader role resource), no change is needed.
+4. Otherwise, choose **Add permissions > Create inline policy > JSON**, then add this policy, replacing `<account-id>`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "PassMightyApiCloudFormationRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::<account-id>:role/MightyApiCloudFormationExecutionRole",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "cloudformation.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "RunMightyApiCloudFormationDeploy",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:ValidateTemplate"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+5. Name the inline policy `PassMightyApiCloudFormationRole` and create it.
+
+## 8. Add the CloudFormation Deploy Stage
 
 1. Open **CodePipeline > Pipelines > mighty-api-production**.
 2. Select **Edit**.
@@ -310,11 +401,12 @@ The CodeBuild role does not need permission to read the Mighty secret. Only the 
     }
     ```
 
-15. Select **Done**, then select **Save** to save the pipeline.
+15. In **Role name**, enter the ARN of `MightyApiCloudFormationExecutionRole`.
+16. Select **Done**, then select **Save** to save the pipeline.
 
-The CloudFormation deploy action uses the pipeline's CloudFormation role. If AWS asks for a role or deployment permissions, use a role that can create/update the stack, Lambda function, Function URL, Lambda execution role, CloudWatch Logs, and SAM deployment artifacts. Scope the final role to this application after the first successful deployment.
+Do not leave **Role name** empty. The execution role creates and updates the stack, Lambda function, Function URL, Lambda execution role, CloudWatch Logs, and SAM deployment artifacts.
 
-## 8. Run and Confirm the First Deployment
+## 9. Run and Confirm the First Deployment
 
 1. In CodePipeline, select **Release change**.
 2. Watch the three stages:
@@ -337,7 +429,7 @@ The CloudFormation deploy action uses the pipeline's CloudFormation role. If AWS
 4. If the **Deploy** action fails, open **CloudFormation > Stacks > mighty-api-production > Events**.
 5. Read the first `CREATE_FAILED` or `UPDATE_FAILED` event; later rollback events usually only report the consequence.
 
-## 9. Get the Public API URL
+## 10. Get the Public API URL
 
 1. Open **CloudFormation > Stacks > mighty-api-production**.
 2. Open the **Outputs** tab.
@@ -358,7 +450,7 @@ The CloudFormation deploy action uses the pipeline's CloudFormation role. If AWS
 
 The response should have one `Access-Control-Allow-Origin` header with `https://patriotsinaction.com`.
 
-## 10. Connect patriotsinaction.com
+## 11. Connect patriotsinaction.com
 
 In the frontend hosting provider's environment-variable settings, add:
 
