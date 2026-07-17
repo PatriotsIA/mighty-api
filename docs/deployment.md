@@ -19,11 +19,27 @@ The Lambda reads `MIGHTY_API_KEY` from Secrets Manager at runtime. It caches the
 ## Architecture and Production Decisions
 
 - AWS region: choose one region and use it for CodePipeline, CodeBuild, CodeConnections, the artifact bucket, CloudFormation, Lambda, and Secrets Manager. `us-east-1` is a reasonable default if no other application requirement dictates a region.
-- Runtime: Node.js 20 on ARM64 Lambda.
+- Runtime: Node.js 22 on ARM64 Lambda.
 - Endpoint: a public Lambda Function URL with no AWS authentication. Browser CORS restricts browser callers but is not access control; the routes themselves must remain read-only.
 - Secret: store `MIGHTY_API_KEY` in AWS Secrets Manager. Lambda reads it at runtime with a narrowly scoped IAM permission.
 - CORS origins: use the exact origins `https://patriotsinaction.com` and `https://www.patriotsinaction.com` only if both serve the frontend. Add the actual Amplify/custom-preview origin only if it must call production. Do not include trailing slashes.
 - Public URL: begin with the Lambda Function URL, then optionally put an API subdomain such as `https://api.patriotsinaction.com` in front of it using CloudFront and Route 53.
+- Runtime choice: Node.js 18 is already deprecated and Node.js 20 was deprecated for Lambda on April 30, 2026. This project uses supported Node.js 22 for both CodeBuild and Lambda.
+
+## Recommended Setup Order
+
+Follow this order so the first CodePipeline run has every resource and source file it needs:
+
+1. Select one AWS region and confirm the exact production CORS origins.
+2. Rotate the Mighty token if it may have been exposed, then create the `mighty-api/production` Secrets Manager secret and record its ARN.
+3. Create the private, versioned S3 artifact bucket in that same region.
+4. Create the GitHub CodeConnection in that same region and authorize `ErikBurdett/mighty-api`.
+5. Run the local checks, confirm `.env` is not tracked, then commit and push the deployment files to GitHub `main`.
+6. Create the CodePipeline and CodeBuild project from the GitHub source.
+7. Add the CloudFormation deploy action using the build artifact's `packaged.yaml`, set its parameters, and release the first revision.
+8. Copy the deployed Function URL into the frontend as `VITE_MIGHTY_PROXY`, then redeploy the frontend.
+
+The browser-by-browser version of these steps is in [`awsdeploy.md`](awsdeploy.md).
 
 ## 1. Preflight and Secrets
 
@@ -86,7 +102,7 @@ The Lambda execution role, not CodeBuild or the browser, must receive `secretsma
 The included SAM template:
 
 - uses `Transform: AWS::Serverless-2016-10-31`;
-- defines a `MightyApiFunction` with `CodeUri: .`, `Handler: dist/handler.handler`, `Runtime: nodejs20.x`, `Architectures: [arm64]`, 30-second timeout, and 512 MB memory;
+- defines a `MightyApiFunction` with `CodeUri: .`, `Handler: dist/handler.handler`, `Runtime: nodejs22.x`, `Architectures: [arm64]`, 30-second timeout, and 512 MB memory;
 - creates a public Function URL (`AuthType: NONE`);
 - accepts a `MightyApiSecretArn` parameter and provides it as `MIGHTY_API_SECRET_ARN`;
 - sets `CORS_ORIGIN` to the production allowlist;
@@ -113,7 +129,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      nodejs: 20
+      nodejs: 22
     commands:
       - npm ci
       - python3 -m pip install --user aws-sam-cli
@@ -160,14 +176,13 @@ Commit and push the handler, SAM template, buildspec, lockfile, and documentatio
 
 Complete these items before opening the CodePipeline wizard:
 
-- Confirm the GitHub repository is private and that `git ls-files .env` prints nothing.
-- Commit and push the current deployment files to `main`; CodePipeline builds the GitHub source revision, not local files.
-- Rotate the Mighty Admin token if it has ever been committed, pasted, shared, or otherwise exposed. Store only the replacement in Secrets Manager.
-- Create the `mighty-api/production` secret with JSON key `MIGHTY_API_KEY`, then retain its ARN for the `MightyApiSecretArn` stack parameter.
-- Record the Mighty network ID for the required `MightyNetworkId` stack parameter.
-- Choose one AWS region for Secrets Manager, S3, CodeConnections, CodeBuild, CodePipeline, CloudFormation, and Lambda.
-- Confirm the exact frontend origins that will call the API. The template defaults to `https://patriotsinaction.com,https://www.patriotsinaction.com`; change the `CorsOrigin` parameter only if the deployed frontend uses other origins.
-- Ensure the CodeBuild project has outbound internet access. It downloads npm packages, installs the SAM CLI, and packages the Lambda. A CodeBuild project attached to a private VPC requires a NAT gateway or equivalent egress.
+1. Confirm the GitHub repository is private and that `git ls-files .env` prints nothing.
+2. Rotate the Mighty Admin token if it has ever been committed, pasted, shared, or otherwise exposed. Create the `mighty-api/production` secret with JSON key `MIGHTY_API_KEY`, then retain its ARN for the `MightyApiSecretArn` stack parameter.
+3. Record the Mighty network ID for the required `MightyNetworkId` stack parameter.
+4. Choose one AWS region for Secrets Manager, S3, CodeConnections, CodeBuild, CodePipeline, CloudFormation, and Lambda, then create the artifact bucket and CodeConnection there.
+5. Confirm the exact frontend origins that will call the API. The template defaults to `https://patriotsinaction.com,https://www.patriotsinaction.com`; change the `CorsOrigin` parameter only if the deployed frontend uses other origins.
+6. Commit and push the current deployment files to `main`; CodePipeline builds the GitHub source revision, not local files.
+7. Ensure the CodeBuild project has outbound internet access. It downloads npm packages, installs the SAM CLI, and packages the Lambda. A CodeBuild project attached to a private VPC requires a NAT gateway or equivalent egress.
 
 Installing the SAM CLI locally and running `sam validate` is recommended, but not a prerequisite: the included CodeBuild buildspec installs SAM and runs validation during every pipeline build.
 
@@ -225,7 +240,7 @@ Restrict the role after the first successful deployment to the application stack
    - Provider: CodeBuild
    - Create a new project, for example `mighty-api-build`
    - Environment image: managed Linux image
-   - Runtime: Node.js 20
+   - Runtime: Node.js 22
    - Privileged mode: off
    - Buildspec: use `buildspec.yml` in the source repository
    - Environment variable: `ARTIFACT_BUCKET=<artifact-bucket-name>` (plain text; this is not secret)

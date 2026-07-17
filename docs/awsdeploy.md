@@ -4,18 +4,23 @@ This is the browser-only setup guide for deploying Mighty API from GitHub throug
 
 Use the same AWS region for every resource in this guide: Secrets Manager, S3, CodeConnections, CodeBuild, CodePipeline, CloudFormation, and Lambda. This guide uses `<region>` and `<account-id>` as placeholders.
 
-## Before Opening CodePipeline
+## Required Order
 
-Make sure these repository files are committed and pushed to the GitHub `main` branch:
+Complete the setup in this order:
 
-- `template.yaml`
-- `buildspec.yml`
-- `package.json` and `package-lock.json`
-- `src/handler.ts` and the rest of `src/`
+1. Choose the AWS region and gather the required values.
+2. Create the Mighty secret in Secrets Manager.
+3. Create the private SAM artifact bucket.
+4. Create the GitHub CodeConnection.
+5. Verify, commit, and push the deployment source to GitHub `main`.
+6. Create the CodePipeline and its CodeBuild project.
+7. Add the CloudFormation deploy stage, then release the first change.
 
-Do not commit `.env`, `.aws-sam`, `dist`, or the Mighty token.
+Do not create the pipeline from the raw, local files. CodePipeline reads the GitHub `main` branch, so the repository must contain the deployment files before the pipeline's first source action runs.
 
-Have these values ready:
+## 0. Choose the Region and Gather Values
+
+Select one AWS region in the upper-right region picker and keep it selected for the rest of this guide. Have these values ready:
 
 | Value | Example / location |
 | --- | --- |
@@ -89,7 +94,37 @@ Do not make this bucket public. It contains deployment artifacts, not browser-ac
 
 Do not create a GitHub personal access token for CodeBuild. Use this AWS-managed connection.
 
-## 4. Create the Pipeline — Starting From the Screen Shown
+## 4. Verify, Commit, and Push the GitHub Source
+
+Before creating CodePipeline, make sure the GitHub `main` branch contains:
+
+- `template.yaml`
+- `buildspec.yml`
+- `package.json` and `package-lock.json`
+- `src/handler.ts` and the rest of `src/`
+
+Run these checks locally:
+
+```bash
+npm ci
+npm run typecheck
+npm run build
+git ls-files .env
+```
+
+The final command must print nothing. Do not commit `.env`, `.aws-sam`, `dist`, or the Mighty token.
+
+Commit and push the deployment work:
+
+```bash
+git add .gitignore .env.example README.md package.json package-lock.json src template.yaml buildspec.yml docs
+git commit -m "prepare Mighty API for AWS deployment"
+git push origin main
+```
+
+Confirm on GitHub that the `main` branch includes `template.yaml` and `buildspec.yml`. Only then continue to CodePipeline.
+
+## 5. Create the Pipeline — Starting From the Screen Shown
 
 The screenshot shows **Deployment** selected and the **Deploy to CloudFormation** template highlighted.
 
@@ -107,7 +142,7 @@ If the exact template labels differ in the AWS console, create a V2 pipeline wit
 GitHub (CodeConnections) -> CodeBuild
 ```
 
-Then add the CloudFormation deploy stage manually in step 6.
+Then add the CloudFormation deploy stage manually in step 7.
 
 ### Pipeline details
 
@@ -149,7 +184,7 @@ Create a new CodeBuild project:
 | Compute | Small is sufficient initially |
 | Operating system | Amazon Linux or Ubuntu managed image |
 | Runtime | Standard |
-| Node.js runtime | Node.js 20 |
+| Node.js runtime | Node.js 22 |
 | Privileged mode | Disabled |
 | Buildspec | Use a buildspec file |
 | Buildspec name | `buildspec.yml` |
@@ -164,24 +199,65 @@ Do not add `MIGHTY_API_KEY` to CodeBuild.
 
 Keep the project outside a VPC unless a VPC is required. If it must run in a private VPC, it needs NAT gateway or equivalent outbound internet access for `npm ci`, installing the SAM CLI, and the AWS APIs.
 
+Under **Artifacts**:
+
+| Field | Value |
+| --- | --- |
+| Artifact type | `CodePipeline` |
+
+Do not leave the primary artifact type as **No artifacts**. CodePipeline needs the CodeBuild output so it can pass `packaged.yaml` to the CloudFormation deploy action.
+
 Finish creating the CodeBuild project, then continue through the pipeline wizard. At this point, create the pipeline without a deployment provider if the wizard permits it. The CloudFormation deploy action is added in the next section.
 
-## 5. Give CodeBuild Access to the Artifact Bucket
+### Required build-action output artifact
+
+When editing the CodeBuild action in CodePipeline, the bottom **Output artifacts** field must not be empty. Enter:
+
+```text
+BuildOutput
+```
+
+Then select **Add**. This passes the `packaged.yaml` file produced by CodeBuild to the later CloudFormation action. Keep the source artifact selected as the build action's input artifact.
+
+Do not add `ARTIFACT_BUCKET` in the CodePipeline action's optional environment-variable field. Configure it in the **CodeBuild project** environment variables as described above.
+
+## 6. Give CodeBuild Access to the Artifact Bucket
 
 After the pipeline is created:
 
 1. Open **CodeBuild > Build projects > mighty-api-build**.
 2. Select the project, then choose **Edit > Service role** or open the linked service role in IAM.
-3. Add a policy that permits that role to read and write only the artifact bucket from step 2:
+3. Confirm the role can read and write the SAM package bucket from step 2:
 
    - `s3:ListBucket` on `arn:aws:s3:::<artifact-bucket-name>`
    - `s3:GetObject`, `s3:PutObject`, and `s3:AbortMultipartUpload` on `arn:aws:s3:::<artifact-bucket-name>/*`
 
-4. Save the policy.
+4. Add a separate inline policy that allows CodeBuild to publish the build output to the CodePipeline-managed artifact bucket. The role usually already has read permissions for this bucket; it must also have `s3:PutObject` for the `BuildOutput` artifact:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Sid": "WriteCodePipelineBuildOutput",
+         "Effect": "Allow",
+         "Action": [
+           "s3:PutObject",
+           "s3:AbortMultipartUpload"
+         ],
+         "Resource": "arn:aws:s3:::<codepipeline-artifact-bucket>/*"
+       }
+     ]
+   }
+   ```
+
+   Find `<codepipeline-artifact-bucket>` in the existing CodeBuild role policies or the pipeline's **Settings** page. It is normally an automatically generated bucket with a name similar to `codepipelinestartertempla-codepipelineartifactsbuc-...`.
+
+5. Save the policy.
 
 The CodeBuild role does not need permission to read the Mighty secret. Only the deployed Lambda function reads it.
 
-## 6. Add the CloudFormation Deploy Stage
+## 7. Add the CloudFormation Deploy Stage
 
 1. Open **CodePipeline > Pipelines > mighty-api-production**.
 2. Select **Edit**.
@@ -238,7 +314,7 @@ The CodeBuild role does not need permission to read the Mighty secret. Only the 
 
 The CloudFormation deploy action uses the pipeline's CloudFormation role. If AWS asks for a role or deployment permissions, use a role that can create/update the stack, Lambda function, Function URL, Lambda execution role, CloudWatch Logs, and SAM deployment artifacts. Scope the final role to this application after the first successful deployment.
 
-## 7. Run and Confirm the First Deployment
+## 8. Run and Confirm the First Deployment
 
 1. In CodePipeline, select **Release change**.
 2. Watch the three stages:
@@ -261,7 +337,7 @@ The CloudFormation deploy action uses the pipeline's CloudFormation role. If AWS
 4. If the **Deploy** action fails, open **CloudFormation > Stacks > mighty-api-production > Events**.
 5. Read the first `CREATE_FAILED` or `UPDATE_FAILED` event; later rollback events usually only report the consequence.
 
-## 8. Get the Public API URL
+## 9. Get the Public API URL
 
 1. Open **CloudFormation > Stacks > mighty-api-production**.
 2. Open the **Outputs** tab.
@@ -282,7 +358,7 @@ The CloudFormation deploy action uses the pipeline's CloudFormation role. If AWS
 
 The response should have one `Access-Control-Allow-Origin` header with `https://patriotsinaction.com`.
 
-## 9. Connect patriotsinaction.com
+## 10. Connect patriotsinaction.com
 
 In the frontend hosting provider's environment-variable settings, add:
 
