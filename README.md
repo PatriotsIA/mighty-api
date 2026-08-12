@@ -26,7 +26,7 @@ All routes forward to `https://api.mn.co/admin/v1` with your bearer token and in
 
 ## Frontend usage (example Vite)
 ```ts
-const api = import.meta.env.VITE_MIGHTY_PROXY ?? "http://localhost:4001";
+const api = import.meta.env.VITE_MIGHTY_API_BASE ?? "http://localhost:4001";
 
 export async function fetchSpaceFeed(spaceId: string) {
   const res = await fetch(`${api}/spaces/${spaceId}/feed?per_page=25`);
@@ -58,7 +58,9 @@ Before creating the pipeline:
 The frontend must receive only the public API URL:
 
 ```text
-VITE_MIGHTY_PROXY=https://<function-url-id>.lambda-url.<region>.on.aws
+VITE_MIGHTY_API_BASE=https://<function-url-id>.lambda-url.<region>.on.aws
 ```
 
 Never expose the Mighty token through a `VITE_*` variable.
+
+Set `VITE_MIGHTY_API_BASE` in AWS Amplify and redeploy the frontend. The API itself must also set `CORS_ORIGIN` to the exact Amplify origin (with no trailing slash), otherwise browser requests will be blocked even though `/health` responds successfully.

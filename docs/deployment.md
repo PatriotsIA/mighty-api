@@ -1,4 +1,4 @@
-# Mighty API AWS CodePipeline Deployment Guide
+# The County Banner Mighty API AWS CodePipeline Deployment Guide
 
 This guide deploys Mighty API from GitHub through AWS CodeConnections, CodePipeline, CodeBuild, and CloudFormation/SAM. It deliberately follows the same deployment shape as `county-post-news-api`:
 
@@ -37,7 +37,7 @@ Follow this order so the first CodePipeline run has every resource and source fi
 5. Run the local checks, confirm `.env` is not tracked, then commit and push the deployment files to GitHub `main`.
 6. Create the CodePipeline and CodeBuild project from the GitHub source.
 7. Add the CloudFormation deploy action using the build artifact's `packaged.yaml`, set its parameters, and release the first revision.
-8. Copy the deployed Function URL into the frontend as `VITE_MIGHTY_PROXY`, then redeploy the frontend.
+8. Copy the deployed Function URL into the frontend as `VITE_MIGHTY_API_BASE`, then redeploy the frontend.
 
 The browser-by-browser version of these steps is in [`awsdeploy.md`](awsdeploy.md).
 
@@ -321,7 +321,7 @@ curl -i \
 Set the frontend build environment variable to the API base URL:
 
 ```text
-VITE_MIGHTY_PROXY=https://<function-url-id>.lambda-url.<region>.on.aws
+VITE_MIGHTY_API_BASE=https://<function-url-id>.lambda-url.<region>.on.aws
 ```
 
 There is no trailing slash because the existing frontend example appends route paths. Redeploy the frontend after changing the value.
@@ -329,13 +329,13 @@ There is no trailing slash because the existing frontend example appends route p
 Use endpoints such as:
 
 ```text
-GET ${VITE_MIGHTY_PROXY}/health
-GET ${VITE_MIGHTY_PROXY}/spaces?page=1&per_page=25
-GET ${VITE_MIGHTY_PROXY}/spaces/<space-id>/feed?page=1&per_page=25
-GET ${VITE_MIGHTY_PROXY}/spaces/<space-id>/events?page=1&per_page=50
+GET ${VITE_MIGHTY_API_BASE}/health
+GET ${VITE_MIGHTY_API_BASE}/spaces?page=1&per_page=25
+GET ${VITE_MIGHTY_API_BASE}/spaces/<space-id>/feed?page=1&per_page=25
+GET ${VITE_MIGHTY_API_BASE}/spaces/<space-id>/events?page=1&per_page=50
 ```
 
-The `VITE_MIGHTY_PROXY` value is public by design. The Mighty token must never be prefixed with `VITE_` because Vite embeds those values in browser JavaScript.
+The `VITE_MIGHTY_API_BASE` value is public by design. The Mighty token must never be prefixed with `VITE_` because Vite embeds those values in browser JavaScript.
 
 ## 8. Optional: Stable Custom API Domain
 
@@ -348,7 +348,7 @@ Lambda Function URLs are acceptable for the initial deployment but are AWS-brand
 5. Change the frontend variable to:
 
    ```text
-   VITE_MIGHTY_PROXY=https://api.patriotsinaction.com
+   VITE_MIGHTY_API_BASE=https://api.patriotsinaction.com
    ```
 
 6. Keep Express as the only CORS layer and confirm the CloudFront behavior forwards `Origin` and `OPTIONS` requests.
@@ -391,4 +391,4 @@ This is expected for `AuthType: NONE`. CORS does not prevent scripts, curl, or o
 - [ ] Lambda role can read only the production Mighty secret.
 - [ ] `CORS_ORIGIN` contains the exact patriotsinaction.com origin(s).
 - [ ] `/health` and browser CORS preflight succeed after deployment.
-- [ ] `VITE_MIGHTY_PROXY` is set in the frontend and the frontend is redeployed.
+- [ ] `VITE_MIGHTY_API_BASE` is set in the frontend and the frontend is redeployed.
