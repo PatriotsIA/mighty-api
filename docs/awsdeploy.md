@@ -488,3 +488,6 @@ Check that:
 ### Browser requests fail with CORS
 
 Compare the browser's exact `Origin` value to `CorsOrigin` in the pipeline parameter overrides. There must be no trailing slash. Do not configure Lambda Function URL CORS separately; Express already applies the CORS headers.
+
+
+##Change
