@@ -1,6 +1,6 @@
 # Mighty API
 
-Small Node/TypeScript service that proxies Mighty Networks Admin API calls for county spaces (feeds and events).
+Small Node/TypeScript service that proxies Mighty Networks county feeds/events and National Weather Service county weather data.
 
 ## Setup
 1. Copy `.env.example` to `.env` and fill values:
@@ -21,8 +21,9 @@ Small Node/TypeScript service that proxies Mighty Networks Admin API calls for c
 - `GET /spaces` – list spaces (paginate with `?page` and `?per_page`).
 - `GET /spaces/:spaceId/feed` – posts for a space (supports `?page` and `?per_page`, defaults 1/25).
 - `GET /spaces/:spaceId/events` – events for a space (supports `?page` and `?per_page`).
+- `GET /weather?lat={latitude}&lon={longitude}` – normalized current conditions, forecast periods, and active county-zone alerts from the National Weather Service.
 
-All routes forward to `https://api.mn.co/admin/v1` with your bearer token and include pagination links from Mighty Networks.
+Space routes forward to `https://api.mn.co/admin/v1` with your bearer token. The weather route identifies this application to `api.weather.gov`, validates coordinates, caches responses for five minutes, and requires no API key.
 
 ## Frontend usage (example Vite)
 ```ts
@@ -43,6 +44,7 @@ export async function fetchSpaceEvents(spaceId: string) {
 
 ## Notes
 - This service intentionally keeps the Mighty API key on the server side and exposes only read endpoints the county pages need.
+- Weather data is provided by the U.S. National Weather Service. Keep the identifying `User-Agent` in `src/lib/weatherClient.ts` current.
 - Adjust rate limits, caching, and auth if you expose beyond internal use.
 
 ## AWS deployment

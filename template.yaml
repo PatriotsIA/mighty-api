@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Mighty Networks proxy API for The County Banner.
+Description: County data proxy for Mighty Networks and National Weather Service data.
 
 Parameters:
   MightyApiSecretArn:
@@ -11,7 +11,7 @@ Parameters:
     Description: Mighty Networks network ID.
   CorsOrigin:
     Type: String
-    Default: https://patriotsinaction.com,https://www.patriotsinaction.com
+    Default: https://patriotsinaction.com,https://www.patriotsinaction.com,https://mylocalgop.com,https://www.mylocalgop.com
     Description: Comma-separated browser origins allowed to call this API.
 
 Globals:

@@ -4,6 +4,7 @@ import helmet from "helmet";
 import pinoHttp from "pino-http";
 import { config } from "./config";
 import spacesRouter from "./routes/spaces";
+import weatherRouter from "./routes/weather";
 import { AxiosError } from "axios";
 
 export const app = express();
@@ -55,6 +56,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/spaces", spacesRouter);
+app.use("/weather", weatherRouter);
 
 app.use(
   (
@@ -68,7 +70,7 @@ app.use(
       const status = axiosErr.response?.status ?? 500;
       const data = axiosErr.response?.data ?? { message: axiosErr.message };
       return res.status(status).json({
-        error: "Mighty API error",
+        error: "Upstream API error",
         detail: data,
       });
     }
