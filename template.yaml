@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: County data proxy for Mighty Networks and National Weather Service data.
+Description: Mighty Networks and weather proxy with PIA candidate intake and moderation.
 
 Parameters:
   MightyApiSecretArn:
@@ -14,6 +14,47 @@ Parameters:
     Default: https://patriotsinaction.com,https://www.patriotsinaction.com,https://mylocalgop.com,https://www.mylocalgop.com
     Description: Comma-separated browser origins allowed to call this API.
 
+  StageName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-zA-Z0-9_-]+$"
+  SesFromEmail:
+    Type: String
+    Default: no-reply@patriotsinaction.com
+    MinLength: 3
+    MaxLength: 254
+    AllowedPattern: '^.+@.+\..+$'
+    ConstraintDescription: Must be an email address verified in SES
+    Description: Verified SES sender used as the SES_FROM_EMAIL environment variable
+  NotificationToEmail:
+    Type: String
+    Default: "erik@patriotsinaction.com"
+    MinLength: 3
+    MaxLength: 254
+    AllowedPattern: '^.+@.+\..+$'
+    Description: Staff recipient notified when a candidate profile is submitted
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: "https://patriotsinaction.com,https://www.patriotsinaction.com"
+    Description: Comma-separated origins without spaces
+  ReviewPageUrl:
+    Type: String
+    Default: "https://patriotsinaction.com/candidate-review"
+    AllowedPattern: '^https://.+$'
+    Description: HTTPS page linked from new-submission notification emails
+
+  CandidateEmailDomain:
+    Type: String
+    Default: patriotsinaction.com
+  CandidateHostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Default: Z003299699G0A1DAOB97
+  CandidateNotificationsEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Disable only during notification maintenance or deployment smoke tests.
+
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -21,19 +62,46 @@ Globals:
       - arm64
     Timeout: 30
     MemorySize: 512
-    Environment:
-      Variables:
-        NODE_ENV: production
-        CORS_ORIGIN: !Ref CorsOrigin
-        MIGHTY_API_SECRET_ARN: !Ref MightyApiSecretArn
-        MIGHTY_NETWORK_ID: !Ref MightyNetworkId
 
 Resources:
+  CandidateEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      EmailIdentity: !Ref CandidateEmailDomain
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
+
+  CandidateEmailDkimRecords:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref CandidateHostedZoneId
+      RecordSets:
+        - Name: !GetAtt CandidateEmailIdentity.DkimDNSTokenName1
+          Type: CNAME
+          TTL: "300"
+          ResourceRecords: [!GetAtt CandidateEmailIdentity.DkimDNSTokenValue1]
+        - Name: !GetAtt CandidateEmailIdentity.DkimDNSTokenName2
+          Type: CNAME
+          TTL: "300"
+          ResourceRecords: [!GetAtt CandidateEmailIdentity.DkimDNSTokenValue2]
+        - Name: !GetAtt CandidateEmailIdentity.DkimDNSTokenName3
+          Type: CNAME
+          TTL: "300"
+          ResourceRecords: [!GetAtt CandidateEmailIdentity.DkimDNSTokenValue3]
+
   MightyApiFunction:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
       Handler: dist/handler.handler
+      Environment:
+        Variables:
+          NODE_ENV: production
+          CORS_ORIGIN: !Ref CorsOrigin
+          MIGHTY_API_SECRET_ARN: !Ref MightyApiSecretArn
+          MIGHTY_NETWORK_ID: !Ref MightyNetworkId
       FunctionUrlConfig:
         AuthType: NONE
       Policies:
@@ -43,7 +111,253 @@ Resources:
               - secretsmanager:GetSecretValue
             Resource: !Ref MightyApiSecretArn
 
+  CandidateHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders: [accept, authorization, cache-control, content-type, pragma]
+        AllowMethods: [GET, POST, PATCH, OPTIONS]
+        AllowOrigins: !Ref AllowedOrigins
+        MaxAge: 86400
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationError":"$context.integrationErrorMessage"}
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      Auth:
+        Authorizers:
+          CognitoJwtAuthorizer:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              audience:
+                - !Ref CandidateUserPoolClient
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CandidateUserPool}"
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}"
+      RetentionInDays: 30
+
+  CandidateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: dist/candidates/handler.handler
+      Timeout: 15
+      Tracing: Active
+      Description: Routes candidate submissions, public reads, and moderation
+      LoggingConfig:
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+      Environment:
+        Variables:
+          CANDIDATES_TABLE_NAME: !Ref CandidatesTable
+          SES_FROM_EMAIL: !Ref SesFromEmail
+          NOTIFICATION_TO_EMAIL: !Ref NotificationToEmail
+          REVIEW_PAGE_URL: !Ref ReviewPageUrl
+          ADMIN_GROUP: admins
+          CANDIDATE_NOTIFICATIONS_ENABLED: !Ref CandidateNotificationsEnabled
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: CandidateTableAccess
+              Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:Query
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt CandidatesTable.Arn
+                - !Sub "${CandidatesTable.Arn}/index/*"
+            - Sid: SubmissionNotification
+              Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${CandidateEmailDomain}"
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /health
+            Method: GET
+        SubmitCandidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates/submissions
+            Method: POST
+            RouteSettings:
+              ThrottlingBurstLimit: 5
+              ThrottlingRateLimit: 2
+        ListPublicCandidates:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates
+            Method: GET
+        GetPublicCandidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates/{id}
+            Method: GET
+        ListAdminCandidates:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/admin/candidates
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+        GetAdminCandidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/admin/candidates/{submissionId}
+            Method: GET
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+        PatchAdminCandidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/admin/candidates/{submissionId}
+            Method: PATCH
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+        ApproveCandidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/admin/candidates/{submissionId}/approve
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+        DenyCandidate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/admin/candidates/{submissionId}/deny
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+
+  CandidateFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${CandidateFunction}"
+      RetentionInDays: 30
+
+  CandidatesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: submissionId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: updatedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: submissionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: StatusUpdatedAtIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: updatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  CandidateUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${AWS::StackName}-admins"
+      UsernameAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      MfaConfiguration: OPTIONAL
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 14
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+
+  CandidateUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${AWS::StackName}-spa"
+      UserPoolId: !Ref CandidateUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      SupportedIdentityProviders: [COGNITO]
+
+  AdminsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admins
+      Description: Administrators allowed to moderate candidate submissions
+      Precedence: 0
+      UserPoolId: !Ref CandidateUserPool
+
 Outputs:
   MightyApiUrl:
     Description: Public Lambda Function URL for the Mighty API.
     Value: !GetAtt MightyApiFunctionUrl.FunctionUrl
+  CandidateApiUrl:
+    Description: Base URL for the deployed HTTP API
+    Value: !Sub "https://${CandidateHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${StageName}"
+  CandidateUserPoolId:
+    Description: Cognito user pool ID
+    Value: !Ref CandidateUserPool
+  CandidateUserPoolClientId:
+    Description: No-secret SPA client ID
+    Value: !Ref CandidateUserPoolClient
+  CandidatesTableName:
+    Description: DynamoDB candidate table name
+    Value: !Ref CandidatesTable

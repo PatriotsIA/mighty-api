@@ -1,4 +1,6 @@
-# The County Banner Mighty API AWS CodePipeline Deployment Guide
+# Mighty API AWS CodePipeline deployment guide
+
+The existing production stack is `mighty-api-production` in **us-east-2**, account **426771918029**. Use the **pia** AWS CLI profile. Candidate intake and moderation now run in this stack through a separate HTTP API and Lambda; follow [candidate operations](candidates.md) for Cognito, DynamoDB, SES and the PIA frontend. This guide describes the original Mighty proxy pipeline, which remains in place.
 
 This guide deploys Mighty API from GitHub through AWS CodeConnections, CodePipeline, CodeBuild, and CloudFormation/SAM. It deliberately follows the same deployment shape as `county-post-news-api`:
 
@@ -8,7 +10,7 @@ GitHub (main) -> CodePipeline Source -> CodeBuild -> CloudFormation/SAM -> Lambd
 patriotsinaction.com -----------------------------------------------------+
 ```
 
-The public API has read-only routes, while the Mighty Networks Admin token stays in AWS. Never place the token in the frontend, a Vite `VITE_*` variable, GitHub repository secrets, or a checked-in `.env` file.
+The original Mighty Function URL has read-only proxy routes, while the Mighty Networks Admin token stays in AWS. Never place the token in the frontend, a Vite `VITE_*` variable, GitHub repository secrets, or a checked-in `.env` file.
 
 ## Deployment Support Included
 
@@ -137,7 +139,8 @@ phases:
   pre_build:
     commands:
       - npm run typecheck
-      - $HOME/.local/bin/sam validate
+      - npm test
+      - $HOME/.local/bin/sam validate --lint
   build:
     commands:
       - npm run build
@@ -149,7 +152,7 @@ artifacts:
     - packaged.yaml
 ```
 
-The buildspec installs the SAM CLI at build time and runs a no-emit TypeScript typecheck. Add `npm test` when a test suite is available. `sam package` converts the local `CodeUri: .` into an S3 object reference. The deploy stage must use `packaged.yaml`, not raw `template.yaml`.
+The buildspec installs the SAM CLI at build time and runs a no-emit TypeScript typecheck. Candidate tests run before packaging. `sam package` converts the local `CodeUri: .` into an S3 object reference. The deploy stage must use `packaged.yaml`, not raw `template.yaml`.
 
 ### 2.5 Verify locally
 

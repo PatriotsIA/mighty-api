@@ -1,3 +1,7 @@
+# Mighty API and PIA candidates
+
+The existing Mighty/weather Function URL is preserved. Candidate intake and moderation run in a separate Lambda and authenticated HTTP API within the same `mighty-api-production` stack. See [candidate deployment and operations](docs/candidates.md). News remains in `county-post-news-api`.
+
 # Mighty API
 
 Small Node/TypeScript service that proxies Mighty Networks county feeds/events and National Weather Service county weather data.

@@ -11,7 +11,8 @@ phases:
   pre_build:
     commands:
       - npm run typecheck
-      - $HOME/.local/bin/sam validate
+      - npm test
+      - $HOME/.local/bin/sam validate --lint
   build:
     commands:
       - npm run build
