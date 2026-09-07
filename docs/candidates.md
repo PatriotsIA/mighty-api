@@ -39,6 +39,8 @@ Seed the 56 existing public profiles before the frontend switches to the API. Co
 
 Create reviewers in `CandidateUserPoolId`, add the `admins` group, and set a permanent password before first login. Keep passwords and JWTs out of repositories, command output and test traces. The deployment bootstrap suppresses invitation emails and saves the generated reviewer credential in a local file with owner-only permissions. The UI supports login and existing software-token MFA challenges; MFA enrollment remains an administrator setup step.
 
+To add staff reviewers, run `python3 scripts/create-reviewers.py <staff-email> ...`. It uses `aws --profile pia`, verifies the expected account and production pool, suppresses invitation mail, assigns the `admins` group and sets generated permanent passwords. It verifies sign-in and access to the protected review endpoint, then signs out the test session. Owner-only credentials are retained at `~/.local/share/pia/candidate-reviewers.json`; retries retain those credentials and do not reset existing confirmed users. Do not commit this file or include it in test traces.
+
 Candidate tables and SES identity use `RetainExceptOnCreate`: failed initial provisioning can clean itself up, while later deletion retains established data/identity. Table replacements also retain data. Restore or delete production records only under an explicit operational request.
 
 ## Notifications
