@@ -53,3 +53,27 @@ describe("submission through real handler and moderation", () => {
     expect(JSON.parse((await handler(event("GET /v1/candidates"))).body!).data).toEqual([]);
   });
 });
+
+it("creates authenticated research drafts privately without consent claims or notification, and enforces county boundaries", async () => {
+  const repository = new MemoryRepository();
+  const notify = vi.fn(async () => {});
+  const handler = createCandidateHandler(repository, { notify });
+  const draft = { candidate: { ...submission.candidate, officeLevel: "federal", scope: "district", countySlugs: ["randall"] }, reviewReason: "Verified election filing and official biography; prepared for review." };
+  expect((await handler(event("POST /v1/admin/candidates", draft))).statusCode).toBe(403);
+  expect((await handler(event("POST /v1/admin/candidates", draft, true))).statusCode).toBe(201);
+  expect((await handler(event("POST /v1/admin/candidates", draft, true))).statusCode).toBe(200);
+  expect(repository.records.size).toBe(1);
+  expect(repository.records.get("alex-example")).toMatchObject({ source: "research", consent: false, attestation: false, status: "pending" });
+  expect(notify).not.toHaveBeenCalled();
+  expect(JSON.parse((await handler(event("GET /v1/candidates"))).body!).data).toEqual([]);
+  expect((await handler(event("PATCH /v1/admin/candidates/{submissionId}", { expectedRevision: 1, candidate: { countySlugs: ["cook"] } }, true))).statusCode).toBe(400);
+  expect((await handler(event("POST /v1/admin/candidates/{submissionId}/approve", { expectedRevision: 1 }, true))).statusCode).toBe(200);
+  const query = event("GET /v1/candidates");
+  query.queryStringParameters = { stateSlug: "texas", countySlug: "randall" };
+  expect(JSON.parse((await handler(query)).body!).data).toHaveLength(1);
+  query.queryStringParameters = { stateSlug: "texas", countySlug: "travis" };
+  expect(JSON.parse((await handler(query)).body!).data).toEqual([]);
+  query.queryStringParameters = { countySlug: "randall" };
+  expect((await handler(query)).statusCode).toBe(400);
+  expect((await handler(event("POST /v1/admin/candidates", { ...draft, candidate: { ...draft.candidate, name: "Overwrite attempt" } }, true))).statusCode).toBe(409);
+});

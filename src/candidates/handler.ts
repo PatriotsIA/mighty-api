@@ -18,6 +18,7 @@ import {
   candidateSubmissionSchema,
   denySchema,
   publicListQuerySchema,
+  researchDraftSchema,
 } from "./domain/schemas";
 import type { CandidateRecord, Reviewer } from "./domain/types";
 import { ApiError, notFound, validationError } from "./lib/errors";
@@ -25,6 +26,7 @@ import { errorResponse, jsonResponse, parseJsonBody } from "./lib/http";
 import { errorName, logger } from "./lib/logger";
 import { CandidateRepository } from "./repository/candidates";
 import { SubmissionEmailService } from "./services/submission-email";
+import { CandidatePhotoStore, photoIdSchema, photoUploadSchema } from "./services/photos";
 
 const adminGroup = process.env.ADMIN_GROUP ?? "admins";
 
@@ -110,6 +112,7 @@ function generateCandidateId(name: string): string {
 export function createCandidateHandler(
   repository: Pick<CandidateRepository, "create" | "get" | "save" | "listApproved" | "listAdmin">,
   emailService: Pick<SubmissionEmailService, "notify">,
+  photos: Pick<CandidatePhotoStore, "create" | "get"> = new CandidatePhotoStore(process.env.CANDIDATE_PHOTOS_BUCKET ?? ""),
 ) {
   async function getRecord(submissionId: string): Promise<CandidateRecord> {
     const record = await repository.get(submissionId);
@@ -280,6 +283,29 @@ export function createCandidateHandler(
       : undefined;
 
     switch (event.routeKey) {
+      case "POST /v1/admin/candidates": {
+        const input = parseJsonBody(event, researchDraftSchema);
+        const now = new Date().toISOString();
+        const record: CandidateRecord = { submissionId: input.candidate.id, candidate: input.candidate, source: "research", consent: false, attestation: false, status: "pending", createdAt: now, updatedAt: now, statusUpdatedAt: now, revision: 1, reviewer, reviewReason: input.reviewReason };
+        try { await repository.create(record); }
+        catch (error) {
+          if (!(error instanceof ApiError) || error.code !== "CANDIDATE_ID_EXISTS") throw error;
+          const existing = await repository.get(record.submissionId);
+          if (!existing || existing.source !== "research" || !isDeepStrictEqual(existing.candidate, record.candidate)) throw error;
+          return jsonResponse(200, { data: toAdminCandidate(existing) }, { "cache-control": "no-store" });
+        }
+        return jsonResponse(201, { data: toAdminCandidate(record) }, { "cache-control": "no-store" });
+      }
+      case "POST /v1/candidates/photos": {
+        const input = parseJsonBody(event, photoUploadSchema, 3 * 1024 * 1024);
+        const photoId = await photos.create(input);
+        return jsonResponse(201, { data: { path: `/v1/candidates/photos/${photoId}` } }, { "cache-control": "no-store" });
+      }
+      case "GET /v1/candidates/photos/{photoId}": {
+        const photoId = parseWithSchema(photoIdSchema, event.pathParameters?.photoId);
+        const photo = await photos.get(photoId);
+        return { statusCode: 200, isBase64Encoded: true, body: Buffer.from(photo.bytes).toString("base64"), headers: { "content-type": photo.contentType, "x-content-type-options": "nosniff", "cache-control": "public,max-age=31536000,immutable" } };
+      }
       case "GET /health":
         return jsonResponse(200, { status: "ok", timestamp: new Date().toISOString() }, {
           "cache-control": "no-store",

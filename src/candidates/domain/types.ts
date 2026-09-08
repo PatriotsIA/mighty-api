@@ -12,6 +12,8 @@ export interface CandidateProfile {
   office: string;
   stateSlug: string;
   scope: CandidateScope;
+  officeLevel?: "local" | "state" | "federal";
+  countySlugs?: string[];
   countySlug?: string;
   countyName?: string;
   district?: string;
@@ -52,7 +54,7 @@ export interface CandidateRecord {
   submitter?: Submitter;
   consent: boolean;
   attestation: boolean;
-  source: "submission" | "seed";
+  source: "submission" | "seed" | "research";
   status: CandidateStatus;
   createdAt: string;
   updatedAt: string;

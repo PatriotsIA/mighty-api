@@ -64,6 +64,20 @@ Globals:
     MemorySize: 512
 
 Resources:
+  CandidatePhotosBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
   CandidateEmailIdentity:
     Type: AWS::SES::EmailIdentity
     DeletionPolicy: RetainExceptOnCreate
@@ -159,6 +173,7 @@ Resources:
       Environment:
         Variables:
           CANDIDATES_TABLE_NAME: !Ref CandidatesTable
+          CANDIDATE_PHOTOS_BUCKET: !Ref CandidatePhotosBucket
           SES_FROM_EMAIL: !Ref SesFromEmail
           NOTIFICATION_TO_EMAIL: !Ref NotificationToEmail
           REVIEW_PAGE_URL: !Ref ReviewPageUrl
@@ -167,6 +182,10 @@ Resources:
       Policies:
         - Version: "2012-10-17"
           Statement:
+            - Sid: CandidatePhotoStorage
+              Effect: Allow
+              Action: [s3:PutObject, s3:GetObject]
+              Resource: !Sub "${CandidatePhotosBucket.Arn}/photos/*"
             - Sid: CandidateTableAccess
               Effect: Allow
               Action:
@@ -182,6 +201,29 @@ Resources:
               Action: ses:SendEmail
               Resource: !Sub "arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${CandidateEmailDomain}"
       Events:
+        CreateResearchDraft:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/admin/candidates
+            Method: POST
+            Auth:
+              Authorizer: CognitoJwtAuthorizer
+        UploadCandidatePhoto:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates/photos
+            Method: POST
+            RouteSettings:
+              ThrottlingBurstLimit: 3
+              ThrottlingRateLimit: 0.2
+        GetCandidatePhoto:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates/photos/{photoId}
+            Method: GET
         Health:
           Type: HttpApi
           Properties:
@@ -346,6 +388,9 @@ Resources:
       UserPoolId: !Ref CandidateUserPool
 
 Outputs:
+  CandidatePhotosBucketName:
+    Description: Private storage for candidate profile photo uploads.
+    Value: !Ref CandidatePhotosBucket
   MightyApiUrl:
     Description: Public Lambda Function URL for the Mighty API.
     Value: !GetAtt MightyApiFunctionUrl.FunctionUrl

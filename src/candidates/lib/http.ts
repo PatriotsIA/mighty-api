@@ -24,7 +24,7 @@ export function jsonResponse(
   };
 }
 
-export function parseJsonBody<T>(event: APIGatewayProxyEventV2, schema: ZodType<T>): T {
+export function parseJsonBody<T>(event: APIGatewayProxyEventV2, schema: ZodType<T>, maxBodyBytes = MAX_BODY_BYTES): T {
   if (!event.body) {
     throw new ApiError(400, "INVALID_JSON", "A JSON request body is required");
   }
@@ -33,7 +33,7 @@ export function parseJsonBody<T>(event: APIGatewayProxyEventV2, schema: ZodType<
     ? Buffer.from(event.body, "base64").toString("utf8")
     : event.body;
 
-  if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
+  if (Buffer.byteLength(rawBody, "utf8") > maxBodyBytes) {
     throw new ApiError(413, "PAYLOAD_TOO_LARGE", "The request body is too large");
   }
 

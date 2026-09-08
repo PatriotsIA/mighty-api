@@ -56,6 +56,8 @@ const candidateFields = {
   office: shortText(200),
   stateSlug: slug,
   scope: z.enum(candidateScopes),
+  officeLevel: z.enum(["local", "state", "federal"]).optional(),
+  countySlugs: z.array(slug).max(254).refine((values) => new Set(values).size === values.length, "Choose each county once.").optional(),
   countySlug: z.preprocess(emptyToUndefined, slug.optional()),
   countyName: optionalText(120),
   district: optionalText(160),
@@ -124,6 +126,8 @@ export const candidatePatchSchema = z
     office: shortText(200).optional(),
     stateSlug: slug.optional(),
     scope: z.enum(candidateScopes).optional(),
+    officeLevel: z.enum(["local", "state", "federal"]).nullable().optional(),
+    countySlugs: z.array(slug).max(254).refine((values) => new Set(values).size === values.length, "Choose each county once.").nullable().optional(),
     countySlug: slug.nullable().optional(),
     countyName: nullableOptionalText(120),
     district: nullableOptionalText(160),
@@ -191,7 +195,7 @@ export const publicListQuerySchema = z
     limit: z.coerce.number().int().min(1).max(100).default(100),
     cursor: z.string().max(2_048).optional(),
   })
-  .strict();
+  .strict().refine((query) => !query.countySlug || Boolean(query.stateSlug), { message: "A county filter requires a state.", path: ["stateSlug"] });
 
 export const adminListQuerySchema = z
   .object({
@@ -204,3 +208,5 @@ export const adminListQuerySchema = z
 export type CandidateSubmissionInput = z.infer<typeof candidateSubmissionSchema>;
 export type CandidatePatchInput = z.infer<typeof candidatePatchSchema>;
 export type SubmitterPatchInput = z.infer<typeof submitterPatchSchema>;
+
+export const researchDraftSchema = z.object({ candidate: candidateProfileSchema, reviewReason: shortText(2000) }).strict();

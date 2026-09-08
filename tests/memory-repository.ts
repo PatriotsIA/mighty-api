@@ -15,7 +15,7 @@ export class MemoryRepository {
     this.records.set(record.submissionId, structuredClone(record));
   }
   async listApproved(options: PublicListOptions) {
-    return { items: [...this.records.values()].filter((record) => record.status === "approved" && (!options.stateSlug || record.candidate.stateSlug === options.stateSlug) && (!options.countySlug || record.candidate.countySlug === options.countySlug)).map((record) => structuredClone(record)) };
+    return { items: [...this.records.values()].filter((record) => record.status === "approved" && (!options.stateSlug || record.candidate.stateSlug === options.stateSlug) && (!options.countySlug || (record.candidate.countySlug === options.countySlug || record.candidate.countySlugs?.includes(options.countySlug) || record.candidate.scope === "statewide"))).map((record) => structuredClone(record)) };
   }
   async listAdmin(options: AdminListOptions) {
     return { items: [...this.records.values()].filter((record) => !options.status || record.status === options.status).map((record) => structuredClone(record)) };

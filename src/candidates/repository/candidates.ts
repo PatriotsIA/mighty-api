@@ -116,7 +116,10 @@ export class CandidateRepository {
       expressionNames["#candidate"] = "candidate";
       expressionNames["#countySlug"] = "countySlug";
       expressionValues[":countySlug"] = options.countySlug;
-      filters.push("#candidate.#countySlug = :countySlug");
+      expressionNames["#countySlugs"] = "countySlugs";
+      expressionNames["#scope"] = "scope";
+      expressionValues[":statewide"] = "statewide";
+      filters.push("(#candidate.#countySlug = :countySlug OR contains(#candidate.#countySlugs, :countySlug) OR #candidate.#scope = :statewide)");
     }
 
     const result = await this.client.send(
