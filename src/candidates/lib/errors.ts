@@ -36,3 +36,7 @@ export function notFound(message = "Candidate submission not found"): ApiError {
 export function conflict(code: string, message: string): ApiError {
   return new ApiError(409, code, message);
 }
+
+export function changeTargetConflict(): ApiError {
+  return conflict("CHANGE_TARGET_CONFLICT", "The original profile has changed. Open the original, compare the changes and resolve manually, or deny this request and resubmit. Nothing was applied.");
+}

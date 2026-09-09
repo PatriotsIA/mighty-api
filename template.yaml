@@ -190,6 +190,7 @@ Resources:
               Effect: Allow
               Action:
                 - dynamodb:GetItem
+                # Also authorizes both conditional Puts in TransactWriteItems.
                 - dynamodb:PutItem
                 - dynamodb:Query
                 - dynamodb:Scan
@@ -229,6 +230,21 @@ Resources:
           Properties:
             ApiId: !Ref CandidateHttpApi
             Path: /health
+            Method: GET
+        SubmitCandidateChangeRequest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates/change-requests
+            Method: POST
+            RouteSettings:
+              ThrottlingBurstLimit: 5
+              ThrottlingRateLimit: 2
+        GetCandidateChangeTarget:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CandidateHttpApi
+            Path: /v1/candidates/{id}/change-target
             Method: GET
         SubmitCandidate:
           Type: HttpApi

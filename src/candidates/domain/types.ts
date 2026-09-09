@@ -48,13 +48,30 @@ export interface Reviewer {
   email?: string;
 }
 
+export interface CandidateChangeRequest {
+  targetSubmissionId: string;
+  targetStatus: "pending" | "approved";
+  targetRevision: number;
+  baseCandidate: CandidateProfile;
+  reason: string;
+}
+
 export interface CandidateRecord {
   submissionId: string;
   candidate: CandidateProfile;
   submitter?: Submitter;
   consent: boolean;
   attestation: boolean;
-  source: "submission" | "seed" | "research";
+  source: "submission" | "seed" | "research" | "change-request";
+  changeRequest?: CandidateChangeRequest;
+  // Internal immutable idempotency key; never expose through any projection.
+  inputFingerprint?: string;
+  lastChangeRequest?: {
+    submissionId: string;
+    appliedAt: string;
+    reviewer: Reviewer;
+    previousRevision: number;
+  };
   status: CandidateStatus;
   createdAt: string;
   updatedAt: string;

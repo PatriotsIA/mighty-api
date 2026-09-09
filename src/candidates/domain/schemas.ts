@@ -151,6 +151,24 @@ export const candidatePatchSchema = z
   .strict()
   .refine((value) => Object.keys(value).length > 0, "At least one candidate field is required");
 
+// References must be validated literally, not lowercased or trimmed into another ID.
+export const changeReferenceSchema = z.string().min(1).max(100).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Must be a lowercase URL slug");
+const changeRequestFields = {
+  requestId: changeReferenceSchema,
+  targetSubmissionId: changeReferenceSchema,
+  reason: shortText(2_000),
+  submitter: submitterSchema,
+  consent: z.literal(true),
+  attestation: z.literal(true),
+  honeypot: z.literal(""),
+};
+export const changeRequestSchema = z.discriminatedUnion("targetStatus", [
+  z.object({ ...changeRequestFields, targetStatus: z.literal("approved"), expectedTargetRevision: z.number().int().positive(), candidate: candidatePatchSchema }).strict(),
+  // Reject a patch before any target lookup/merged-field validation: pending
+  // profiles must not become a public field-validation oracle.
+  z.object({ ...changeRequestFields, targetStatus: z.literal("pending"), expectedTargetRevision: z.number().int().positive().optional() }).strict(),
+]);
+
 export const submitterPatchSchema = z
   .object({
     submitterName: shortText(120).optional(),
@@ -168,10 +186,11 @@ export const adminPatchSchema = z
     expectedRevision: z.number().int().positive(),
     candidate: candidatePatchSchema.optional(),
     submitter: submitterPatchSchema.optional(),
+    reviewReason: z.string().trim().max(2_000).nullable().optional(),
   })
   .strict()
-  .refine((value) => value.candidate !== undefined || value.submitter !== undefined, {
-    message: "A candidate or submitter update is required",
+  .refine((value) => value.candidate !== undefined || value.submitter !== undefined || value.reviewReason !== undefined, {
+    message: "A candidate, submitter or review note update is required",
   });
 
 export const approveSchema = z

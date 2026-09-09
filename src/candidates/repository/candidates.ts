@@ -5,11 +5,12 @@ import {
   PutCommand,
   QueryCommand,
   ScanCommand,
+  TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
 
 import type { CandidateRecord, CandidateStatus, Page } from "../domain/types";
 import { decodeCursor, encodeCursor } from "../lib/cursor";
-import { conflict } from "../lib/errors";
+import { changeTargetConflict, conflict } from "../lib/errors";
 
 const STATUS_UPDATED_AT_INDEX = "StatusUpdatedAtIndex";
 
@@ -96,15 +97,56 @@ export class CandidateRepository {
     }
   }
 
+  public async applyChangeRequest(request: CandidateRecord, target: CandidateRecord, expectedRevision: number): Promise<void> {
+    const baseline = request.changeRequest!;
+    try {
+      await this.client.send(new TransactWriteCommand({
+      TransactItems: [
+        { Put: {
+          TableName: this.tableName,
+          Item: request,
+          ConditionExpression: "attribute_exists(submissionId) AND #revision = :expectedRevision AND #status = :expectedStatus AND #source = :changeRequest AND #candidate.#id = :candidateId",
+          ExpressionAttributeNames: { "#revision": "revision", "#status": "status", "#source": "source", "#candidate": "candidate", "#id": "id" },
+          ExpressionAttributeValues: { ":expectedRevision": expectedRevision, ":expectedStatus": "pending", ":changeRequest": "change-request", ":candidateId": baseline.baseCandidate.id },
+        } },
+        { Put: {
+          TableName: this.tableName,
+          Item: target,
+          ConditionExpression: "attribute_exists(submissionId) AND #revision = :expectedRevision AND #status = :expectedStatus AND #source <> :changeRequest AND #candidate.#id = :candidateId",
+          ExpressionAttributeNames: { "#revision": "revision", "#status": "status", "#source": "source", "#candidate": "candidate", "#id": "id" },
+          ExpressionAttributeValues: { ":expectedRevision": baseline.targetRevision, ":expectedStatus": baseline.targetStatus, ":changeRequest": "change-request", ":candidateId": baseline.baseCandidate.id },
+        } },
+      ],
+      }));
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.name === "TransactionConflictException") throw changeTargetConflict();
+        if (error.name === "TransactionCanceledException") {
+          const reasons = (error as Error & { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
+          if (reasons?.[0]?.Code === "ConditionalCheckFailed") {
+            throw conflict("REVISION_CONFLICT", "The submission was changed by another request");
+          }
+          // Some SDK/service responses omit cancellation details. Fail closed
+          // as a conflict; never fall back to independent writes. Explicit
+          // capacity/validation failures below still propagate as server errors.
+          if (!reasons?.length || reasons.some((reason) => reason.Code === "ConditionalCheckFailed" || reason.Code === "TransactionConflict")) throw changeTargetConflict();
+        }
+      }
+      throw error;
+    }
+  }
+
   public async listApproved(options: PublicListOptions): Promise<Page<CandidateRecord>> {
-    const exclusiveStartKey = decodeCursor(options.cursor, "index", "approved");
+    let exclusiveStartKey: Record<string, unknown> | undefined = decodeCursor(options.cursor, "index", "approved");
     const expressionNames: Record<string, string> = {
       "#status": "status",
+      "#source": "source",
     };
     const expressionValues: Record<string, unknown> = {
       ":approved": "approved",
+      ":changeRequest": "change-request",
     };
-    const filters: string[] = [];
+    const filters = ["(attribute_not_exists(#source) OR #source <> :changeRequest)"];
 
     if (options.stateSlug !== undefined) {
       expressionNames["#candidate"] = "candidate";
@@ -122,25 +164,43 @@ export class CandidateRepository {
       filters.push("(#candidate.#countySlug = :countySlug OR contains(#candidate.#countySlugs, :countySlug) OR #candidate.#scope = :statewide)");
     }
 
-    const result = await this.client.send(
-      new QueryCommand({
-        TableName: this.tableName,
-        IndexName: STATUS_UPDATED_AT_INDEX,
-        KeyConditionExpression: "#status = :approved",
-        ExpressionAttributeNames: expressionNames,
-        ExpressionAttributeValues: expressionValues,
-        ...(filters.length === 0 ? {} : { FilterExpression: filters.join(" AND ") }),
-        Limit: options.limit,
-        ScanIndexForward: false,
-        ...(exclusiveStartKey === undefined ? {} : { ExclusiveStartKey: exclusiveStartKey }),
-      }),
-    );
+    const items: CandidateRecord[] = [];
+    do {
+      const result = await this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          IndexName: STATUS_UPDATED_AT_INDEX,
+          KeyConditionExpression: "#status = :approved",
+          ExpressionAttributeNames: expressionNames,
+          ExpressionAttributeValues: expressionValues,
+          FilterExpression: filters.join(" AND "),
+          Limit: options.limit,
+          ScanIndexForward: false,
+          ...(exclusiveStartKey === undefined ? {} : { ExclusiveStartKey: exclusiveStartKey }),
+        }),
+      );
 
-    const nextCursor = encodeCursor(result.LastEvaluatedKey);
-    return {
-      items: (result.Items ?? []) as CandidateRecord[],
-      ...(nextCursor === undefined ? {} : { nextCursor }),
-    };
+      items.push(...((result.Items ?? []) as CandidateRecord[]));
+      if (items.length > options.limit) {
+        // Look ahead to an eligible original so hidden rows alone never create
+        // public continuation. Re-read that lookahead on the next request by
+        // anchoring only to the last returned original's full table/GSI key.
+        const lastReturned = items[options.limit - 1]!;
+        return {
+          items: items.slice(0, options.limit),
+          nextCursor: encodeCursor({
+            submissionId: lastReturned.submissionId,
+            status: "approved",
+            updatedAt: lastReturned.updatedAt,
+          }),
+        };
+      }
+      // DynamoDB applies filters after Limit/1 MB evaluation. Its boundary may
+      // identify a private request, even with no Items; keep it server-side.
+      exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey !== undefined && Object.keys(exclusiveStartKey).length > 0);
+
+    return { items };
   }
 
   public async listAdmin(options: AdminListOptions): Promise<Page<CandidateRecord>> {

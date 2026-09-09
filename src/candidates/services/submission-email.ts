@@ -12,10 +12,12 @@ export class SubmissionEmailService {
 
   public async notify(record: CandidateRecord): Promise<void> {
     if (process.env.CANDIDATE_NOTIFICATIONS_ENABLED === "false") return;
+    const isChangeRequest = record.source === "change-request";
     const text = [
-      "A new candidate submission is ready for review.",
+      isChangeRequest ? "A candidate profile change request is ready for private review." : "A new candidate submission is ready for review.",
       "",
       `Submission ID: ${record.submissionId}`,
+      ...(isChangeRequest ? [`Original submission ID: ${record.changeRequest?.targetSubmissionId}`] : []),
       `Candidate: ${record.candidate.name}`,
       `Office: ${record.candidate.office}`,
       `Submitted at: ${record.createdAt}`,
@@ -32,7 +34,7 @@ export class SubmissionEmailService {
         Content: {
           Simple: {
             Subject: {
-              Data: "New candidate submission",
+              Data: isChangeRequest ? "Candidate profile change request" : "New candidate submission",
               Charset: "UTF-8",
             },
             Body: {

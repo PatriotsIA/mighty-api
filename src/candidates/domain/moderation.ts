@@ -28,18 +28,26 @@ function applyNullablePatch<T extends object>(current: T, patch: object): Record
   return next;
 }
 
+export function patchCandidateProfile(record: CandidateRecord["candidate"], patch: CandidatePatchInput | undefined) {
+  const parsed = candidateProfileSchema.safeParse(patch === undefined ? record : applyNullablePatch(record, patch));
+  if (!parsed.success) throw validationError(parsed.error);
+  return parsed.data;
+}
+
 export function patchCandidateRecord(
   record: CandidateRecord,
   expectedRevision: number,
   candidatePatch: CandidatePatchInput | undefined,
   submitterPatch: SubmitterPatchInput | undefined,
   now: string,
+  reviewReason?: string | null,
 ): CandidateRecord {
   assertRevision(record, expectedRevision);
+  if (record.source === "change-request" && record.status !== "pending") {
+    throw conflict("CHANGE_REQUEST_CLOSED", "Approved or denied change requests are read-only");
+  }
 
-  const parsed = candidateProfileSchema.safeParse(candidatePatch === undefined ? record.candidate : applyNullablePatch(record.candidate, candidatePatch));
-  if (!parsed.success) throw validationError(parsed.error);
-  const candidate = parsed.data;
+  const candidate = patchCandidateProfile(record.candidate, candidatePatch);
 
   let submitter = record.submitter;
   if (submitterPatch !== undefined) {
@@ -52,6 +60,7 @@ export function patchCandidateRecord(
   return {
     ...record,
     candidate,
+    reviewReason: reviewReason === undefined ? record.reviewReason : reviewReason?.trim() || undefined,
     ...(submitter === undefined ? {} : { submitter }),
     updatedAt: now,
     revision: record.revision + 1,

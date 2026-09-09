@@ -6,6 +6,8 @@ The stack preserves `MightyApiFunction`, its Function URL, secrets and CORS. Can
 
 ## Build and release
 
+The [change-request API and storage contract](candidate-change-requests.md) documents public intake/prefill, private review, immutable retries, atomic approval, reviewer races and stale-target handling. Release its backend routes and request-publication safeguards **before** the frontend. Accepted requests are audit records, never public profiles; retain those safeguards in any rollback.
+
 Run Node 22, `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, and `sam validate --lint --profile pia --region us-east-2`. The standard SAM build packages `dist/handler.handler` and `dist/candidates/handler.handler`. CodeBuild runs the same checks through its service role; do not set the workstation `pia` profile in CodeBuild.
 
 The existing CloudFormation execution role also needs [candidate resource permissions](candidate-deploy-policy.json), including **apigateway:TagResource** and **apigateway:UntagResource** for API Gateway v2 stages. Existing stack parameters for the Mighty secret, network and CORS must be retained during updates.

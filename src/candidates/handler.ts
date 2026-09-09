@@ -7,21 +7,23 @@ import type {
 } from "aws-lambda";
 import type { ZodType } from "zod";
 
-import { moderateCandidateRecord, patchCandidateRecord } from "./domain/moderation";
+import { moderateCandidateRecord, patchCandidateProfile, patchCandidateRecord } from "./domain/moderation";
+import { applyChangeRequestToTarget, changeRequestFingerprint, changeRequestReceipt } from "./domain/change-requests";
 import { toAdminCandidate, toPublicCandidate } from "./domain/projection";
 import {
   adminListQuerySchema,
   adminPatchSchema,
   approveSchema,
-  candidateIdSchema,
+  changeReferenceSchema,
   candidateProfileSchema,
   candidateSubmissionSchema,
+  changeRequestSchema,
   denySchema,
   publicListQuerySchema,
   researchDraftSchema,
 } from "./domain/schemas";
 import type { CandidateRecord, Reviewer } from "./domain/types";
-import { ApiError, notFound, validationError } from "./lib/errors";
+import { ApiError, changeTargetConflict, conflict, notFound, validationError } from "./lib/errors";
 import { errorResponse, jsonResponse, parseJsonBody } from "./lib/http";
 import { errorName, logger } from "./lib/logger";
 import { CandidateRepository } from "./repository/candidates";
@@ -41,7 +43,7 @@ function parseWithSchema<T>(schema: ZodType<T>, value: unknown): T {
 }
 
 function pathIdentifier(event: APIGatewayProxyEventV2, key: "id" | "submissionId"): string {
-  return parseWithSchema(candidateIdSchema, event.pathParameters?.[key]);
+  return parseWithSchema(changeReferenceSchema, event.pathParameters?.[key]);
 }
 
 function getClaims(event: APIGatewayProxyEventV2): Claims {
@@ -110,7 +112,7 @@ function generateCandidateId(name: string): string {
 }
 
 export function createCandidateHandler(
-  repository: Pick<CandidateRepository, "create" | "get" | "save" | "listApproved" | "listAdmin">,
+  repository: Pick<CandidateRepository, "create" | "get" | "save" | "applyChangeRequest" | "listApproved" | "listAdmin">,
   emailService: Pick<SubmissionEmailService, "notify">,
   photos: Pick<CandidatePhotoStore, "create" | "get"> = new CandidatePhotoStore(process.env.CANDIDATE_PHOTOS_BUCKET ?? ""),
 ) {
@@ -205,7 +207,7 @@ export function createCandidateHandler(
     event: APIGatewayProxyEventV2,
   ): Promise<APIGatewayProxyStructuredResultV2> {
     const record = await repository.get(pathIdentifier(event, "id"));
-    if (record === undefined || record.status !== "approved") {
+    if (record === undefined || record.status !== "approved" || record.source === "change-request") {
       throw notFound("Approved candidate not found");
     }
 
@@ -245,6 +247,7 @@ export function createCandidateHandler(
       input.candidate,
       input.submitter,
       new Date().toISOString(),
+      input.reviewReason,
     );
     await repository.save(updated, input.expectedRevision);
     return jsonResponse(200, { data: toAdminCandidate(updated) }, { "cache-control": "no-store" });
@@ -268,7 +271,13 @@ export function createCandidateHandler(
       input.reason,
       new Date().toISOString(),
     );
-    await repository.save(updated, input.expectedRevision);
+    if (record.source === "change-request" && decision === "approved") {
+      if (!record.changeRequest) throw changeTargetConflict();
+      const target = await repository.get(record.changeRequest.targetSubmissionId);
+      await repository.applyChangeRequest(updated, applyChangeRequestToTarget(updated, target), input.expectedRevision);
+    } else {
+      await repository.save(updated, input.expectedRevision);
+    }
     return jsonResponse(200, { data: toAdminCandidate(updated) }, { "cache-control": "no-store" });
   }
 
@@ -310,10 +319,54 @@ export function createCandidateHandler(
         return jsonResponse(200, { status: "ok", timestamp: new Date().toISOString() }, {
           "cache-control": "no-store",
         });
+      case "POST /v1/candidates/change-requests": {
+        const input = parseJsonBody(event, changeRequestSchema);
+        const inputFingerprint = changeRequestFingerprint(input);
+        function retryReceipt(existing: CandidateRecord) {
+          if (existing.source !== "change-request" || existing.inputFingerprint !== inputFingerprint) {
+            throw conflict("CANDIDATE_ID_EXISTS", "That request ID is already in use by different input");
+          }
+          return jsonResponse(200, { data: changeRequestReceipt(existing) }, { "cache-control": "no-store" });
+        }
+        // Check retries before the target: review edits, approval or deletion of
+        // the target must neither reveal private state nor invalidate a receipt.
+        const existing = await repository.get(input.requestId);
+        if (existing) return retryReceipt(existing);
+        let record: CandidateRecord;
+        try {
+          const target = await getRecord(input.targetSubmissionId);
+          if (target.source === "change-request" || target.status === "denied") throw notFound();
+          if (target.status !== input.targetStatus || (input.expectedTargetRevision !== undefined && target.revision !== input.expectedTargetRevision)) throw changeTargetConflict();
+          const now = new Date().toISOString();
+          record = {
+            submissionId: input.requestId, candidate: input.targetStatus === "approved" ? patchCandidateProfile(target.candidate, input.candidate) : structuredClone(target.candidate),
+            source: "change-request", status: "pending", revision: 1, inputFingerprint,
+            submitter: input.submitter, consent: input.consent, attestation: input.attestation,
+            createdAt: now, updatedAt: now, statusUpdatedAt: now,
+            changeRequest: { targetSubmissionId: target.submissionId, targetStatus: input.targetStatus, targetRevision: target.revision, baseCandidate: structuredClone(target.candidate), reason: input.reason },
+          };
+          await repository.create(record);
+        }
+        catch (error) {
+          // A concurrent identical intake can win before the target is read,
+          // so recover its receipt even if the target changed or disappeared.
+          const winner = await repository.get(input.requestId);
+          if (!winner) throw error;
+          return retryReceipt(winner);
+        }
+        try { await emailService.notify(record); }
+        catch (error) { logger.warn("submission_notification_failed", { requestId, errorName: errorName(error) }); }
+        return jsonResponse(201, { data: changeRequestReceipt(record) }, { "cache-control": "no-store" });
+      }
       case "POST /v1/candidates/submissions":
         return createSubmission(event, requestId);
       case "GET /v1/candidates":
         return listPublic(event);
+      case "GET /v1/candidates/{id}/change-target": {
+        const record = await repository.get(pathIdentifier(event, "id"));
+        if (!record || record.status !== "approved" || record.source === "change-request") throw notFound("Approved candidate not found");
+        return jsonResponse(200, { data: { candidate: toPublicCandidate(record), submissionId: record.submissionId, revision: record.revision, status: "approved" } }, { "cache-control": "no-store" });
+      }
       case "GET /v1/candidates/{id}":
         return getPublic(event);
       case "GET /v1/admin/candidates":

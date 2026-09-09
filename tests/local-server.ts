@@ -10,7 +10,7 @@ const handle = createCandidateHandler(new MemoryRepository(), { notify: async ()
   create: async (input) => { const bytes = decodePhoto(input); const id = `${crypto.randomUUID()}.${input.contentType === "image/jpeg" ? "jpg" : input.contentType.split("/")[1]}`; photos.set(id, { bytes, contentType: input.contentType }); return id; },
   get: async (id) => { const photo = photos.get(id); if (!photo) throw notFound(); return photo; },
 });
-const routes = ["POST /v1/admin/candidates", "POST /v1/candidates/photos", "GET /v1/candidates/photos/{photoId}", "GET /health", "POST /v1/candidates/submissions", "GET /v1/candidates", "GET /v1/candidates/{id}", "GET /v1/admin/candidates", "GET /v1/admin/candidates/{submissionId}", "PATCH /v1/admin/candidates/{submissionId}", "POST /v1/admin/candidates/{submissionId}/approve", "POST /v1/admin/candidates/{submissionId}/deny"];
+const routes = ["POST /v1/candidates/change-requests", "GET /v1/candidates/{id}/change-target", "POST /v1/admin/candidates", "POST /v1/candidates/photos", "GET /v1/candidates/photos/{photoId}", "GET /health", "POST /v1/candidates/submissions", "GET /v1/candidates", "GET /v1/candidates/{id}", "GET /v1/admin/candidates", "GET /v1/admin/candidates/{submissionId}", "PATCH /v1/admin/candidates/{submissionId}", "POST /v1/admin/candidates/{submissionId}/approve", "POST /v1/admin/candidates/{submissionId}/deny"];
 const server = createServer(async (request, response) => {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
