@@ -6,6 +6,10 @@ The stack preserves `MightyApiFunction`, its Function URL, secrets and CORS. Can
 
 ## Build and release
 
+Candidate profiles may include optional versioned `voterGuide` responses. The 28 supplied office questionnaires are available to candidates of every state and party; every question and subfield is optional. `src/voter-guide/questions.json` and `model.ts` are mirrored in `pia-counties`. Keep them synchronized and preserve the immutable `texas-republican-2026-09` question text. Source JSON SHA-256: `e87dcff33d6a0ca9285694b93ff064967986863f6b5ac3f2bfdb93f3066c47c2`.
+
+The candidate schema validates question IDs, office/version, structured choices, amounts, 150/50-word limits and a 4,000-character text bound. Candidate JSON requests are limited to 128 KiB. Responses use existing storage, review revisions, projections and atomic change requests; no new AWS resources or reseeding are required. `voterGuide: null` removes a questionnaire through an authenticated patch or reviewed published-profile change request. Publish the backend support before the frontend and retain schema support when rolling back after responses exist. See the sibling frontend's `docs/candidate-questionnaires.md` for the complete user workflow and wire shape.
+
 The [change-request API and storage contract](candidate-change-requests.md) documents public intake/prefill, private review, immutable retries, atomic approval, reviewer races and stale-target handling. Release its backend routes and request-publication safeguards **before** the frontend. Accepted requests are audit records, never public profiles; retain those safeguards in any rollback.
 
 Run Node 22, `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, and `sam validate --lint --profile pia --region us-east-2`. The standard SAM build packages `dist/handler.handler` and `dist/candidates/handler.handler`. CodeBuild runs the same checks through its service role; do not set the workstation `pia` profile in CodeBuild.

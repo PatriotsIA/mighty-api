@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import { candidateScopes, candidateStatuses, submitterRoles } from "./types";
 import { geographyIssue } from "./geography";
+import { voterGuideIssues, type VoterGuideResponse } from "../../voter-guide/model";
+
+export const voterGuideSchema = z.unknown().superRefine((value, context) => {
+  for (const issue of voterGuideIssues(value)) context.addIssue({ code: "custom", ...issue });
+}).transform((value) => value as VoterGuideResponse);
 
 const emptyToUndefined = (value: unknown) => (value === "" ? undefined : value);
 
@@ -71,6 +76,7 @@ const candidateFields = {
   videoEmbedUrl: optionalHttpUrl,
   videoTitle: optionalText(240),
   bio: optionalText(5_000),
+  voterGuide: voterGuideSchema.optional(),
   electionYear: z.number().int().min(1900).max(2200).optional(),
   incumbent: z.boolean().optional(),
   facebookUrl: optionalHttpUrl,
@@ -141,6 +147,7 @@ export const candidatePatchSchema = z
     videoEmbedUrl: nullableOptionalHttpUrl,
     videoTitle: nullableOptionalText(240),
     bio: nullableOptionalText(5_000),
+    voterGuide: voterGuideSchema.nullable().optional(),
     electionYear: z.number().int().min(1900).max(2200).nullable().optional(),
     incumbent: z.boolean().nullable().optional(),
     facebookUrl: nullableOptionalHttpUrl,

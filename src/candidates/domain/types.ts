@@ -1,3 +1,5 @@
+import type { VoterGuideResponse } from "../../voter-guide/model";
+
 export const candidateScopes = ["statewide", "district", "county", "precinct", "city"] as const;
 export const candidateStatuses = ["pending", "approved", "denied"] as const;
 export const submitterRoles = ["candidate", "campaign", "volunteer", "party", "other"] as const;
@@ -27,6 +29,7 @@ export interface CandidateProfile {
   videoEmbedUrl?: string;
   videoTitle?: string;
   bio?: string;
+  voterGuide?: VoterGuideResponse;
   electionYear?: number;
   incumbent?: boolean;
   facebookUrl?: string;

@@ -6,7 +6,8 @@ import type { ZodType } from "zod";
 
 import { ApiError, validationError } from "./errors";
 
-const MAX_BODY_BYTES = 64 * 1024;
+// Twenty bounded questionnaire answers plus the existing profile fields.
+const MAX_BODY_BYTES = 128 * 1024;
 
 export function jsonResponse(
   statusCode: number,
