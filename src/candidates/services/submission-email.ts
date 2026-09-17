@@ -21,6 +21,8 @@ export class SubmissionEmailService {
       `Candidate: ${record.candidate.name}`,
       `Office: ${record.candidate.office}`,
       `Submitted at: ${record.createdAt}`,
+      ...(record.submitter?.interviewRequested ? ["Requested: Interview with Patriots In Action"] : []),
+      ...(record.submitter?.advertisingRequested ? ["Requested: Candidate advertising information"] : []),
       "",
       `Review submission: ${this.reviewPageUrl}`,
     ].join("\n");

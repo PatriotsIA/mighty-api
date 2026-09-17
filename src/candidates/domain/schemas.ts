@@ -107,6 +107,8 @@ export const submitterSchema = z
     submitterEmail: email.transform((value) => value.toLowerCase()),
     submitterPhone: optionalPhone,
     submitterRole: z.enum(submitterRoles),
+    interviewRequested: z.boolean().optional(),
+    advertisingRequested: z.boolean().optional(),
   })
   .strict();
 

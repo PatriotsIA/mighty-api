@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { candidateProfileSchema, candidateSubmissionSchema, voterGuideSchema } from "../src/candidates/domain/schemas";
 import { createCandidateHandler } from "../src/candidates/handler";
-import { voterGuide, voterGuideIssues, voterGuideVersion, type VoterGuideResponse } from "../src/voter-guide/model";
+import { legacyVoterGuideVersion, voterGuide, voterGuideIssues, voterGuideVersion, type VoterGuideResponse } from "../src/voter-guide/model";
 import { MemoryRepository } from "./memory-repository";
 
 function response(officeId = "constable"): VoterGuideResponse {
@@ -30,6 +30,13 @@ describe("voter guide contract", () => {
     const partial = { ...response(), answers: { "1": { text: "A saved answer." } } };
     expect(candidateProfileSchema.safeParse({ ...candidate, voterGuide: partial }).success).toBe(true);
     expect(candidateSubmissionSchema.safeParse(submission(partial)).success).toBe(true);
+    expect(candidateProfileSchema.safeParse({ ...candidate, voterGuide: { ...partial, version: legacyVoterGuideVersion } }).success).toBe(true);
+  });
+  it("accepts optional private interest flags and rejects non-boolean values", () => {
+    const input = submission();
+    expect(candidateSubmissionSchema.safeParse({ ...input, submitter: { ...input.submitter, interviewRequested: true, advertisingRequested: false } }).success).toBe(true);
+    expect(candidateSubmissionSchema.safeParse({ ...input, submitter: { ...input.submitter, interviewRequested: "yes" } }).success).toBe(false);
+    expect(candidateSubmissionSchema.safeParse({ ...input, candidate: { ...input.candidate, advertisingRequested: true } }).success).toBe(false);
   });
   it("enforces 150/50-word limits and a bounded character count", () => {
     const guide = response();
@@ -75,8 +82,13 @@ it("keeps answers private, supports idempotent submission and review, publishes,
   const notify = vi.fn(async () => {});
   const handler = createCandidateHandler(repository, { notify });
   const guide = response();
-  expect((await handler(event("POST /v1/candidates/submissions", submission(guide)))).statusCode).toBe(201);
-  expect((await handler(event("POST /v1/candidates/submissions", submission(guide)))).statusCode).toBe(200);
+  const input = submission(guide);
+  const interested = { ...input, submitter: { ...input.submitter, interviewRequested: true, advertisingRequested: true } };
+  expect((await handler(event("POST /v1/candidates/submissions", interested))).statusCode).toBe(201);
+  expect((await handler(event("POST /v1/candidates/submissions", interested))).statusCode).toBe(200);
+  const admin = JSON.parse((await handler(event("GET /v1/admin/candidates/{submissionId}", undefined, candidate.id, true))).body!).data;
+  expect(admin.submitter.interviewRequested).toBe(true);
+  expect(admin.submitter.advertisingRequested).toBe(true);
   expect(notify).toHaveBeenCalledTimes(1);
   expect((await handler(event("GET /v1/candidates/{id}"))).statusCode).toBe(404);
   expect((await handler(event("GET /v1/candidates"))).body).not.toContain("Candidate answer");
@@ -88,6 +100,8 @@ it("keeps answers private, supports idempotent submission and review, publishes,
   const published = await handler(event("GET /v1/candidates/{id}"));
   expect(JSON.parse(published.body!).data.voterGuide).toEqual(guide);
   expect(published.body).not.toContain("private@example.com");
+  expect(published.body).not.toContain("interviewRequested");
+  expect(published.body).not.toContain("advertisingRequested");
   const revised = structuredClone(guide); revised.answers[2].text = "A corrected answer.";
   const change = { ...submission(), candidate: { voterGuide: revised }, requestId: "change-questionnaire", targetSubmissionId: candidate.id, targetStatus: "approved", expectedTargetRevision: 3, reason: "Correct answer two." };
   expect((await handler(event("POST /v1/candidates/change-requests", change))).statusCode).toBe(201);

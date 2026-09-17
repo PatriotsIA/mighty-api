@@ -39,6 +39,16 @@ describe("staff notifications", () => {
     const command = send.mock.calls[0][0] as unknown as SendEmailCommand;
     expect(command.input.Content?.Simple?.Subject?.Data).toBe("New candidate submission");
   });
+  it("includes requested interview and advertising follow-up in the staff notification", async () => {
+    vi.stubEnv("CANDIDATE_NOTIFICATIONS_ENABLED", "true");
+    const send = vi.fn(async (_command: SendEmailCommand) => ({}));
+    const service = new SubmissionEmailService("from@example.com", "staff@example.com", "https://example.com/review", { send } as unknown as SESv2Client);
+    await service.notify({ ...record, submitter: { ...record.submitter!, interviewRequested: true, advertisingRequested: true } });
+    const command = send.mock.calls[0][0];
+    expect(command.input.Content?.Simple?.Body?.Text?.Data).toContain("Requested: Interview with Patriots In Action");
+    expect(command.input.Content?.Simple?.Body?.Text?.Data).toContain("Requested: Candidate advertising information");
+    expect(command.input.Destination).toEqual({ ToAddresses: ["staff@example.com"] });
+  });
   it("keeps the deployment mail-disable switch effective for requests", async () => {
     vi.stubEnv("CANDIDATE_NOTIFICATIONS_ENABLED", "false");
     const send = vi.fn(async (_command: SendEmailCommand, _options?: { abortSignal: AbortSignal }) => ({}));

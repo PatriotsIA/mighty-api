@@ -2,7 +2,8 @@ import source from "./questions.json";
 
 // Mirrored in pia-counties/src/voter-guide. Keep this version immutable so saved
 // answers continue to refer to the exact questions the candidate received.
-export const voterGuideVersion = "texas-republican-2026-09";
+export const legacyVoterGuideVersion = "texas-republican-2026-09";
+export const voterGuideVersion = "localized-republican-2026-09";
 export const answerCharacterLimit = 4_000;
 export type Question = {
   number: number;
@@ -27,7 +28,7 @@ export type VoterGuideAnswer = {
   amounts?: Record<string, string>;
   fundSource?: string;
 };
-export type VoterGuideResponse = { version: typeof voterGuideVersion; officeId: string; answers: Record<string, VoterGuideAnswer> };
+export type VoterGuideResponse = { version: typeof voterGuideVersion | typeof legacyVoterGuideVersion; officeId: string; answers: Record<string, VoterGuideAnswer> };
 export type VoterGuideIssue = { path: (string | number)[]; message: string };
 
 export const questionnaireSections = [
@@ -49,7 +50,7 @@ export function voterGuideIssues(value: unknown): VoterGuideIssue[] {
   const issue = (path: (string | number)[], message: string) => { issues.push({ path, message }); };
   if (!object(value)) return [{ path: [], message: "Choose a valid voter guide questionnaire." }];
   for (const key of Object.keys(value)) if (!["version", "officeId", "answers"].includes(key)) issue([key], "Unknown questionnaire field.");
-  if (value.version !== voterGuideVersion) issue(["version"], "Unsupported questionnaire version.");
+  if (value.version !== voterGuideVersion && value.version !== legacyVoterGuideVersion) issue(["version"], "Unsupported questionnaire version.");
   const office = typeof value.officeId === "string" ? questionnaireOffice(value.officeId) : undefined;
   if (!office) issue(["officeId"], "Choose a supported office questionnaire.");
   if (!object(value.answers)) { issue(["answers"], "Answers must be an object."); return issues; }

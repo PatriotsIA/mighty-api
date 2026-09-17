@@ -43,6 +43,8 @@ export interface Submitter {
   submitterEmail: string;
   submitterPhone?: string;
   submitterRole: SubmitterRole;
+  interviewRequested?: boolean;
+  advertisingRequested?: boolean;
 }
 
 export interface Reviewer {
