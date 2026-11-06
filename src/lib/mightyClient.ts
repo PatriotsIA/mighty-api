@@ -62,15 +62,26 @@ export class MightyClient {
         ? response.data.items.filter((post: { post_type?: string }) => post.post_type === "event")
         : [];
 
-    const detailed = await Promise.all(
-      filtered.map(async (event: { id: string | number }) => {
-        try {
-          const detail = await this.client.get(
-            `/networks/${this.networkId}/events/${event.id}`,
-          );
-          return detail.data;
-        } catch (error) {
-          return event;
+    // Large county calendars must not fan out one upstream request per event at
+    // once. Preserve order, and surface an incomplete page instead of silently
+    // returning undated post stubs that the calendars would discard.
+    const detailed: unknown[] = new Array(filtered.length);
+    let nextIndex = 0;
+    let failed = false;
+    await Promise.all(
+      Array.from({ length: Math.min(3, filtered.length) }, async () => {
+        while (!failed && nextIndex < filtered.length) {
+          const index = nextIndex++;
+          const event = filtered[index] as { id: string | number };
+          try {
+            const detail = await this.client.get(
+              `/networks/${this.networkId}/events/${event.id}`,
+            );
+            detailed[index] = detail.data;
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
         }
       }),
     );
